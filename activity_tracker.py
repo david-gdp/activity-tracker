@@ -3,11 +3,13 @@
 ActivityWatch Time Tracker
 
 This script fetches data from ActivityWatch (localhost:5600) and calculates
-total non-idle and idle time for a specified day.
+total non-idle and idle time for a specified day or week.
 
 Usage:
     activity-tracker                    # Analyze today
     activity-tracker --date 2025-05-27  # Analyze specific date
+    activity-tracker --week             # Analyze this week
+    activity-tracker --week --date 2025-05-27  # Analyze week containing this date
     activity-tracker --help             # Show help
 """
 
@@ -118,7 +120,83 @@ class ActivityWatchTracker:
 
         return active_hours, idle_hours
 
-    def print_summary(self, active_hours: float, idle_hours: float):
+    def get_week_range(self, target_date: datetime) -> Tuple[datetime, datetime]:
+        """
+        Get the start and end of the week containing the target date.
+        Week starts on Monday.
+
+        Returns:
+            Tuple[datetime, datetime]: (week_start, week_end)
+        """
+        # Get the Monday of the week containing target_date
+        days_since_monday = target_date.weekday()
+        week_start = target_date - timedelta(days=days_since_monday)
+        week_start = week_start.replace(hour=0, minute=0, second=0, microsecond=0)
+
+        # Get the Sunday of the same week
+        week_end = week_start + timedelta(days=7)
+
+        return week_start, week_end
+
+    def calculate_weekly_time(
+        self, target_date: datetime
+    ) -> Tuple[float, float, List[Tuple[str, float]]]:
+        """
+        Calculate total active and idle time for a week (Monday to Sunday).
+
+        Returns:
+            Tuple[float, float, List[Tuple[str, float]]]: (total_active_hours, total_idle_hours, daily_breakdown)
+        """
+        week_start, week_end = self.get_week_range(target_date)
+
+        print(
+            f"Analyzing weekly activity from {week_start.strftime('%Y-%m-%d')} to {(week_end - timedelta(days=1)).strftime('%Y-%m-%d')}"
+        )
+
+        total_active_hours = 0.0
+        total_idle_hours = 0.0
+        daily_breakdown = []
+
+        # Calculate time for each day of the week
+        current_date = week_start
+        while current_date < week_end:
+            active_hours, idle_hours = self.calculate_daily_time(current_date)
+            total_active_hours += active_hours
+            total_idle_hours += idle_hours
+
+            day_name = current_date.strftime("%A")
+            daily_breakdown.append(
+                (f"{day_name} ({current_date.strftime('%Y-%m-%d')})", active_hours)
+            )
+
+            current_date += timedelta(days=1)
+
+        return total_active_hours, total_idle_hours, daily_breakdown
+
+    def calculate_finish_time(
+        self, active_hours: float, target_hours: float = 8.0
+    ) -> str:
+        """
+        Calculate when the user will finish work based on current active time.
+
+        Returns:
+            str: Estimated finish time in HH:MM:SS format
+        """
+        if active_hours >= target_hours:
+            return "Already completed target hours!"
+
+        remaining_hours = target_hours - active_hours
+        remaining_seconds = remaining_hours * 3600
+
+        # Calculate finish time from now
+        now = datetime.now()
+        finish_time = now + timedelta(seconds=remaining_seconds)
+
+        return finish_time.strftime("%H:%M:%S")
+
+    def print_summary(
+        self, active_hours: float, idle_hours: float, target_date: datetime = None
+    ):
         """Print a formatted summary of the time tracking results."""
         total_hours = active_hours + idle_hours
         target_hours = 8.0  # 8-hour workday target
@@ -168,17 +246,102 @@ class ActivityWatchTracker:
         progress_percentage = min((active_hours / target_hours) * 100, 100)
         print(f"Progress:     {progress_percentage:.1f}% of 8-hour target")
 
+        # Show estimated finish time (only for today)
+        if target_date is None or target_date.date() == datetime.now().date():
+            if active_hours < target_hours:
+                finish_time = self.calculate_finish_time(active_hours, target_hours)
+                print(f"Estimated finish time: {finish_time}")
+
         print("=" * 50)
+
+    def print_weekly_summary(
+        self,
+        total_active_hours: float,
+        total_idle_hours: float,
+        daily_breakdown: List[Tuple[str, float]],
+        week_start: datetime,
+    ):
+        """Print a formatted summary of the weekly time tracking results."""
+        total_hours = total_active_hours + total_idle_hours
+        target_weekly_hours = 40.0  # 40-hour work week target
+
+        print("\n" + "=" * 60)
+        print("WEEKLY TIME SUMMARY")
+        print("=" * 60)
+        print(
+            f"Week of {week_start.strftime('%Y-%m-%d')} to {(week_start + timedelta(days=6)).strftime('%Y-%m-%d')}"
+        )
+        print("-" * 60)
+
+        # Daily breakdown
+        for day_info, hours in daily_breakdown:
+            print(f"{day_info:<30} {hours:>6.2f} hours")
+
+        print("-" * 60)
+        print(
+            f"Total Active Time:  {total_active_hours:.2f} hours ({total_active_hours * 60:.0f} minutes)"
+        )
+        print(
+            f"Total Idle Time:    {total_idle_hours:.2f} hours ({total_idle_hours * 60:.0f} minutes)"
+        )
+        print(f"Total Time:         {total_hours:.2f} hours")
+
+        if total_hours > 0:
+            active_percentage = (total_active_hours / total_hours) * 100
+            print(f"Active Percentage:  {active_percentage:.1f}%")
+
+        # Calculate weekly progress
+        print("-" * 60)
+        print("40-HOUR WORK WEEK PROGRESS")
+        print("-" * 60)
+
+        if total_active_hours >= target_weekly_hours:
+            overtime_hours = total_active_hours - target_weekly_hours
+            if overtime_hours >= 1.0:
+                overtime_hours_int = int(overtime_hours)
+                overtime_minutes = int((overtime_hours - overtime_hours_int) * 60)
+                print(
+                    f"✅ Weekly target reached! Overtime: {overtime_hours_int}h {overtime_minutes}m"
+                )
+            else:
+                overtime_minutes = int(overtime_hours * 60)
+                print(f"✅ Weekly target reached! Overtime: {overtime_minutes} minutes")
+        else:
+            remaining_hours = target_weekly_hours - total_active_hours
+            if remaining_hours >= 1.0:
+                remaining_hours_int = int(remaining_hours)
+                remaining_minutes = int((remaining_hours - remaining_hours_int) * 60)
+                print(
+                    f"⏳ Time left this week: {remaining_hours_int}h {remaining_minutes}m"
+                )
+            else:
+                remaining_minutes = int(remaining_hours * 60)
+                print(f"⏳ Time left this week: {remaining_minutes} minutes")
+
+        # Show weekly progress percentage
+        progress_percentage = min((total_active_hours / target_weekly_hours) * 100, 100)
+        print(f"Weekly Progress:    {progress_percentage:.1f}% of 40-hour target")
+
+        # Average daily hours
+        avg_daily_hours = total_active_hours / 7
+        print(f"Average Daily:      {avg_daily_hours:.2f} hours")
+
+        print("=" * 60)
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Track daily activity using ActivityWatch data"
+        description="Track daily or weekly activity using ActivityWatch data"
     )
     parser.add_argument(
         "--date",
         type=str,
         help="Date to analyze (YYYY-MM-DD format). Default is today.",
+    )
+    parser.add_argument(
+        "--week",
+        action="store_true",
+        help="Analyze weekly data (Monday to Sunday). Use with --date to specify week containing that date.",
     )
     parser.add_argument(
         "--host",
@@ -217,8 +380,19 @@ def main():
         return
 
     # Calculate and display results
-    active_hours, idle_hours = tracker.calculate_daily_time(target_date)
-    tracker.print_summary(active_hours, idle_hours)
+    if args.week:
+        # Weekly analysis
+        total_active_hours, total_idle_hours, daily_breakdown = (
+            tracker.calculate_weekly_time(target_date)
+        )
+        week_start, _ = tracker.get_week_range(target_date)
+        tracker.print_weekly_summary(
+            total_active_hours, total_idle_hours, daily_breakdown, week_start
+        )
+    else:
+        # Daily analysis
+        active_hours, idle_hours = tracker.calculate_daily_time(target_date)
+        tracker.print_summary(active_hours, idle_hours, target_date)
 
 
 if __name__ == "__main__":
