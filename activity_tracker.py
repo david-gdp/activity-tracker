@@ -194,6 +194,41 @@ class ActivityWatchTracker:
 
         return finish_time.strftime("%H:%M:%S")
 
+    def calculate_overtime_range(
+        self,
+        active_hours: float,
+        target_hours: float = 8.0,
+        target_date: datetime = None,
+    ) -> str:
+        """
+        Calculate the overtime time range when user has worked more than target hours.
+
+        Returns:
+            str: Overtime range in "HH:MM:SS - HH:MM:SS" format
+        """
+        if active_hours <= target_hours:
+            return ""
+
+        overtime_hours = active_hours - target_hours
+        overtime_seconds = overtime_hours * 3600
+
+        # Calculate overtime range
+        if target_date is None or target_date.date() == datetime.now().date():
+            # For today, use current time as end point
+            end_time = datetime.now()
+        else:
+            # For historical dates, assume end of workday (e.g., 18:00) plus overtime
+            base_end_time = target_date.replace(
+                hour=18, minute=0, second=0, microsecond=0
+            )
+            end_time = base_end_time + timedelta(seconds=overtime_seconds)
+
+        overtime_start = end_time - timedelta(seconds=overtime_seconds)
+
+        return (
+            f"{overtime_start.strftime('%H:%M:%S')} - {end_time.strftime('%H:%M:%S')}"
+        )
+
     def print_summary(
         self, active_hours: float, idle_hours: float, target_date: datetime = None
     ):
@@ -232,6 +267,13 @@ class ActivityWatchTracker:
             else:
                 overtime_minutes = int(overtime_hours * 60)
                 print(f"✅ Target reached! Overtime: {overtime_minutes} minutes")
+
+            # Show overtime range
+            overtime_range = self.calculate_overtime_range(
+                active_hours, target_hours, target_date
+            )
+            if overtime_range:
+                print(f"Overtime period: {overtime_range}")
         else:
             remaining_hours = target_hours - active_hours
             if remaining_hours >= 1.0:
