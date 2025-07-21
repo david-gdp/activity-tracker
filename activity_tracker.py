@@ -229,6 +229,60 @@ class ActivityWatchTracker:
             f"{overtime_start.strftime('%H:%M:%S')} - {end_time.strftime('%H:%M:%S')}"
         )
 
+    def is_holiday(self, target_date: datetime) -> bool:
+        """
+        Check if the given date is a holiday (weekend).
+        Currently supports rule-based detection for Saturday (5) and Sunday (6).
+
+        Returns:
+            bool: True if the date is a holiday (weekend), False otherwise
+        """
+        # weekday() returns 0-6 where Monday=0, Sunday=6
+        return target_date.weekday() in [5, 6]  # Saturday=5, Sunday=6
+
+    def get_holiday_info(self, target_date: datetime) -> str:
+        """
+        Get holiday information for the given date.
+
+        Returns:
+            str: Holiday name or empty string if not a holiday
+        """
+        weekday = target_date.weekday()
+        if weekday == 5:
+            return "Saturday"
+        elif weekday == 6:
+            return "Sunday"
+        return ""
+
+    def calculate_holiday_overtime_range(
+        self, active_hours: float, target_date: datetime = None
+    ) -> str:
+        """
+        Calculate the overtime range for holidays where entire working time is overtime.
+
+        Returns:
+            str: Overtime range in "HH:MM:SS - HH:MM:SS" format
+        """
+        if active_hours <= 0:
+            return ""
+
+        active_seconds = active_hours * 3600
+
+        # Calculate overtime range
+        if target_date is None or target_date.date() == datetime.now().date():
+            # For today, use current time as end point
+            end_time = datetime.now()
+        else:
+            # For historical dates, assume end of workday (e.g., 18:00) but calculate based on actual hours
+            base_start_time = target_date.replace(
+                hour=9, minute=0, second=0, microsecond=0
+            )
+            end_time = base_start_time + timedelta(seconds=active_seconds)
+
+        start_time = end_time - timedelta(seconds=active_seconds)
+
+        return f"{start_time.strftime('%H:%M:%S')} - {end_time.strftime('%H:%M:%S')}"
+
     def print_summary(
         self, active_hours: float, idle_hours: float, target_date: datetime = None
     ):
@@ -236,9 +290,20 @@ class ActivityWatchTracker:
         total_hours = active_hours + idle_hours
         target_hours = 8.0  # 8-hour workday target
 
+        # Use today's date if target_date is None
+        analysis_date = target_date if target_date is not None else datetime.now()
+        is_holiday = self.is_holiday(analysis_date)
+        holiday_name = self.get_holiday_info(analysis_date)
+
         print("\n" + "=" * 50)
         print("DAILY TIME SUMMARY")
         print("=" * 50)
+
+        # Show holiday status
+        if is_holiday:
+            print(f"🏖️  HOLIDAY: {holiday_name} ({analysis_date.strftime('%Y-%m-%d')})")
+            print("=" * 50)
+
         print(
             f"Active Time:  {active_hours:.2f} hours ({active_hours * 60:.0f} minutes)"
         )
@@ -253,46 +318,75 @@ class ActivityWatchTracker:
 
         # Calculate time left to reach 8-hour workday
         print("-" * 50)
-        print("8-HOUR WORKDAY PROGRESS")
+        if is_holiday:
+            print("HOLIDAY OVERTIME")
+        else:
+            print("8-HOUR WORKDAY PROGRESS")
         print("-" * 50)
 
-        if active_hours >= target_hours:
-            overtime_hours = active_hours - target_hours
-            if overtime_hours >= 1.0:
-                overtime_hours_int = int(overtime_hours)
-                overtime_minutes = int((overtime_hours - overtime_hours_int) * 60)
-                print(
-                    f"✅ Target reached! Overtime: {overtime_hours_int}h {overtime_minutes}m"
-                )
-            else:
-                overtime_minutes = int(overtime_hours * 60)
-                print(f"✅ Target reached! Overtime: {overtime_minutes} minutes")
+        if is_holiday:
+            # On holidays, entire working time is considered overtime
+            if active_hours > 0:
+                if active_hours >= 1.0:
+                    active_hours_int = int(active_hours)
+                    active_minutes = int((active_hours - active_hours_int) * 60)
+                    print(f"⚠️  Holiday Overtime: {active_hours_int}h {active_minutes}m")
+                else:
+                    active_minutes = int(active_hours * 60)
+                    print(f"⚠️  Holiday Overtime: {active_minutes} minutes")
 
-            # Show overtime range
-            overtime_range = self.calculate_overtime_range(
-                active_hours, target_hours, target_date
-            )
-            if overtime_range:
-                print(f"Overtime period: {overtime_range}")
-        else:
-            remaining_hours = target_hours - active_hours
-            if remaining_hours >= 1.0:
-                remaining_hours_int = int(remaining_hours)
-                remaining_minutes = int((remaining_hours - remaining_hours_int) * 60)
-                print(f"⏳ Time left: {remaining_hours_int}h {remaining_minutes}m")
+                # Show holiday overtime range
+                overtime_range = self.calculate_holiday_overtime_range(
+                    active_hours, target_date
+                )
+                if overtime_range:
+                    print(f"Holiday work period: {overtime_range}")
             else:
-                remaining_minutes = int(remaining_hours * 60)
-                print(f"⏳ Time left: {remaining_minutes} minutes")
+                print("🎉 No work on holiday - well deserved rest!")
+        else:
+            # Regular workday logic
+            if active_hours >= target_hours:
+                overtime_hours = active_hours - target_hours
+                if overtime_hours >= 1.0:
+                    overtime_hours_int = int(overtime_hours)
+                    overtime_minutes = int((overtime_hours - overtime_hours_int) * 60)
+                    print(
+                        f"✅ Target reached! Overtime: {overtime_hours_int}h {overtime_minutes}m"
+                    )
+                else:
+                    overtime_minutes = int(overtime_hours * 60)
+                    print(f"✅ Target reached! Overtime: {overtime_minutes} minutes")
+
+                # Show overtime range
+                overtime_range = self.calculate_overtime_range(
+                    active_hours, target_hours, target_date
+                )
+                if overtime_range:
+                    print(f"Overtime period: {overtime_range}")
+            else:
+                remaining_hours = target_hours - active_hours
+                if remaining_hours >= 1.0:
+                    remaining_hours_int = int(remaining_hours)
+                    remaining_minutes = int(
+                        (remaining_hours - remaining_hours_int) * 60
+                    )
+                    print(f"⏳ Time left: {remaining_hours_int}h {remaining_minutes}m")
+                else:
+                    remaining_minutes = int(remaining_hours * 60)
+                    print(f"⏳ Time left: {remaining_minutes} minutes")
 
         # Show progress percentage
-        progress_percentage = min((active_hours / target_hours) * 100, 100)
-        print(f"Progress:     {progress_percentage:.1f}% of 8-hour target")
+        if is_holiday:
+            print(f"Holiday work: {active_hours:.2f} hours (all considered overtime)")
+        else:
+            progress_percentage = min((active_hours / target_hours) * 100, 100)
+            print(f"Progress:     {progress_percentage:.1f}% of 8-hour target")
 
-        # Show estimated finish time (only for today)
-        if target_date is None or target_date.date() == datetime.now().date():
-            if active_hours < target_hours:
-                finish_time = self.calculate_finish_time(active_hours, target_hours)
-                print(f"Estimated finish time: {finish_time}")
+            # Show estimated finish time (only for today and non-holidays)
+            if target_date is None or target_date.date() == datetime.now().date():
+                if active_hours < target_hours:
+                    finish_time = self.calculate_finish_time(active_hours, target_hours)
+                    print(f"Estimated finish time: {finish_time}")
 
         print("=" * 50)
 
